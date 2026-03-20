@@ -1,5 +1,5 @@
 {
   "name": "Nottiffy",
-  "description": "Google Spreadsheet monitoring app - Get real-time notifications",
+  "description": "Get real-time notifications whenever a new row is added to your Google Spreadsheet.",
   "requestFramePermissions": []
 }

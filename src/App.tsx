@@ -232,7 +232,7 @@ export default function App() {
                   <>
                     <div className="space-y-4">
                       <label className="flex items-center gap-2 text-sm font-semibold text-zinc-600">
-                        <LinkIcon size={16} /> GAS Web App URL
+                        <LinkIcon size={16} /> Google App Script URL
                       </label>
                       <input 
                         type="text" 
@@ -411,7 +411,7 @@ export default function App() {
 
         {/* Updates Feed */}
         <section className="space-y-4">
-          <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider px-2">Recent Activity</h3>
+          <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider px-2">Recent Updates</h3>
           
           <div className="space-y-3">
             {updates.length === 0 ? (
@@ -459,7 +459,7 @@ export default function App() {
       {/* Footer Info */}
       <footer className="max-w-md mx-auto p-8 text-center">
         <p className="text-xs text-zinc-400 leading-relaxed">
-          The app runs a GAS script which polls a spreadsheet at the specified frequency to check for updates. 
+          The app executes the Google app script which checks for spreadsheet updates at the specified frequency. 
           Ensure your GAS script is deployed as a Web App with access for "Anyone".
         </p>
       </footer>
