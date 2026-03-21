@@ -138,8 +138,15 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Failed to start monitoring');
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await response.json();
+          throw new Error(data.error || 'Failed to start monitoring');
+        } else {
+          const text = await response.text();
+          console.error('Non-JSON Error Response:', text);
+          throw new Error(`Server Error (${response.status}): ${text.substring(0, 100)}...`);
+        }
       }
 
       setIsMonitoring(true);
@@ -275,6 +282,21 @@ export default function App() {
 
                 <div className="space-y-4">
                   <label className="flex items-center gap-2 text-sm font-semibold text-zinc-600">
+                    <Clock size={16} /> Start Monitoring From
+                  </label>
+                  <input 
+                    type="date" 
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all"
+                  />
+                  <p className="text-[10px] text-zinc-400">
+                    Only rows added after this date will trigger notifications.
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  <label className="flex items-center gap-2 text-sm font-semibold text-zinc-600">
                     <Palette size={16} /> Theme Color
                   </label>
                   <div className="flex flex-wrap gap-3">
@@ -315,6 +337,8 @@ export default function App() {
                     Copy Config Link
                   </button>
                 </div>
+
+
               </div>
             </motion.div>
           )}

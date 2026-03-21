@@ -16,6 +16,12 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Logging middleware
+  app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    next();
+  });
+
   // In-memory store for user sheet monitoring
   const monitors = new Map<string, { spreadsheetId: string, gasUrl: string, lastPolledTime: string, interval: NodeJS.Timeout }>();
 
@@ -44,8 +50,20 @@ async function startServer() {
         url.searchParams.append("spreadsheetId", monitor.spreadsheetId);
         url.searchParams.append("lastPolledDate", monitor.lastPolledTime);
 
+        console.log(`Polling GAS: ${url.toString()}`);
         const response = await fetch(url.toString());
-        if (!response.ok) throw new Error("GAS request failed");
+        
+        const contentType = response.headers.get('content-type');
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`GAS returned ${response.status}: ${text.substring(0, 50)}`);
+        }
+
+        if (!contentType || !contentType.includes('application/json')) {
+          const text = await response.text();
+          console.error('GAS returned non-JSON:', text);
+          throw new Error("GAS script returned HTML instead of JSON. Ensure it is deployed as a Web App and shared with 'Anyone'.");
+        }
         
         const data = await response.json();
         
@@ -104,8 +122,20 @@ async function startServer() {
         url.searchParams.append("spreadsheetId", monitor.spreadsheetId);
         url.searchParams.append("lastPolledDate", monitor.lastPolledTime);
 
+        console.log(`Manual Polling GAS: ${url.toString()}`);
         const response = await fetch(url.toString());
-        if (!response.ok) throw new Error("GAS request failed");
+        
+        const contentType = response.headers.get('content-type');
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`GAS returned ${response.status}: ${text.substring(0, 50)}`);
+        }
+
+        if (!contentType || !contentType.includes('application/json')) {
+          const text = await response.text();
+          console.error('GAS returned non-JSON:', text);
+          throw new Error("GAS script returned HTML instead of JSON. Ensure it is deployed as a Web App and shared with 'Anyone'.");
+        }
         
         const data = await response.json();
         
