@@ -282,7 +282,7 @@ export default function App() {
               <span>Configuration Required</span>
             </div>
             <p className="text-xs leading-relaxed">
-              The <code className="bg-amber-100 px-1 rounded">GAS_URL</code> environment variable is not set on the server. 
+              The <code className="bg-amber-100 px-1 rounded">GAS_URL</code> {appName} environment variable {isConfigValid} {process.env.GAS_URL}is not set on the server. 
               Please add it in the <b>Settings</b> menu (AI Studio) or your <code className="bg-amber-100 px-1 rounded">.env</code> file (Local) to enable monitoring.
             </p>
           </motion.div>
