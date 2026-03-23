@@ -13,12 +13,16 @@ export default defineConfig(({ mode }) => {
     plugins: [react(), tailwindcss()],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-    },
+      'process.env.GAS_URL': JSON.stringify(env.GAS_URL),    
+            },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    env: {
+      GAS_URL: process.env.GAS_URL,
+  },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
