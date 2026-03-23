@@ -34,6 +34,11 @@ async function startServer() {
 
   // Health check to verify configuration
   app.get("/api/health", (req, res) => {
+    const gasUrl = process.env.GAS_URL;
+    if (!gasUrl) {
+       console.error("GAS_URL not configured in environment");
+      return;
+     }
     res.json({ 
       status: "ok", 
       gasConfigured: !!process.env.GAS_URL,
