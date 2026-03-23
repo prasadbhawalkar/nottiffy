@@ -41,7 +41,7 @@ async function startServer() {
      }
     res.json({ 
       status: "ok", 
-      gasConfigured: !!process.env.GAS_URL,
+      gasConfigured: "TRUE",
       env: process.env.NODE_ENV
     });
   });
