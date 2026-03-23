@@ -20,12 +20,6 @@ async function startServer() {
   app.use((req, res, next) => {
     console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
     next();
-
-  const gasUrl = process.env.GAS_URL;
-    if (!gasUrl) {
-      return res.status(400).json({ error: "Missing GAS_URL - not configured", gasUrl });
-    }
-
   });
 
   // In-memory store for user sheet monitoring
@@ -34,6 +28,11 @@ async function startServer() {
 
   // Health check to verify configuration
   app.get("/api/health", (req, res) => {
+    const gasUrl = process.env.GAS_URL;
+    if (!gasUrl) {
+       console.error("GAS_URL not configured in environment");
+      return;
+     }
     res.json({ 
       status: "ok", 
       gasConfigured: !!process.env.GAS_URL,
@@ -47,7 +46,7 @@ async function startServer() {
     const gasUrl = process.env.GAS_URL;
 
     if (!spreadsheetId || typeof spreadsheetId !== 'string' || !gasUrl) {
-      return res.status(400).json({ error: "Missing spreadsheetId or GAS_URL not configured", gasUrl });
+      return res.status(400).json({ error: "Missing spreadsheetId or GAS_URL not configured" });
     }
 
     try {
