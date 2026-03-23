@@ -271,7 +271,7 @@ export default function App() {
 
       <main className="max-w-md mx-auto p-6 space-y-6">
         {/* Configuration Warning */}
-        {isConfigValid === false && (
+        {!process.env.GAS_URL && (
           <motion.div 
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
