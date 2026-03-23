@@ -8,17 +8,16 @@ import { io, Socket } from 'socket.io-client';
 import { 
   Bell, 
   Settings, 
-  Table, 
-  CheckCircle2, 
   AlertCircle, 
-  Link as LinkIcon, 
   Palette, 
   Type,
   RefreshCw,
   PlusCircle,
   Clock,
   ExternalLink,
-  Zap
+  Zap,
+  Check,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -29,24 +28,34 @@ function cn(...inputs: ClassValue[]) {
 }
 
 interface RowUpdate {
+  spreadsheetId: string;
+  spreadsheetName: string;
   count: number;
   rows: any[][];
   timestamp: string;
 }
 
+interface MonitoredSheet {
+  id: string;
+  name: string;
+  lastCount: number;
+}
+
 export default function App() {
-  const [gasUrl, setGasUrl] = useState(() => {
-    const params = new URLSearchParams(window.location.search);
-    const urlParam = params.get('gasUrl');
-    if (urlParam) return decodeURIComponent(urlParam);
-    return localStorage.getItem('gas_url') || '';
+  const [sheets, setSheets] = useState<MonitoredSheet[]>(() => {
+    const saved = localStorage.getItem('monitored_sheets');
+    if (saved) {
+      try {
+        return JSON.parse(saved).map((s: any) => ({ ...s, lastCount: 0 }));
+      } catch (e) {
+        return [];
+      }
+    }
+    return [];
   });
-  const [spreadsheetId, setSpreadsheetId] = useState(() => {
-    const params = new URLSearchParams(window.location.search);
-    const idParam = params.get('spreadsheetId');
-    if (idParam) return idParam;
-    return localStorage.getItem('spreadsheet_id') || '';
-  });
+
+  const [newSheetId, setNewSheetId] = useState('');
+  
   const [frequency, setFrequency] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const freqParam = params.get('frequency');
@@ -57,26 +66,37 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const dateParam = params.get('startDate');
     if (dateParam) return dateParam;
-    // Default to yesterday
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     return yesterday.toISOString().split('T')[0];
   });
 
-  const isPreConfigured = new URLSearchParams(window.location.search).has('gasUrl') && 
-                          new URLSearchParams(window.location.search).has('spreadsheetId');
-
   const [isMonitoring, setIsMonitoring] = useState(false);
-  const [updates, setUpdates] = useState<RowUpdate[]>([]);
   const [status, setStatus] = useState<'idle' | 'connecting' | 'monitoring' | 'error'>('idle');
+  const [updates, setUpdates] = useState<RowUpdate[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [socket, setSocket] = useState<Socket | null>(null);
+  const [selectedSheetId, setSelectedSheetId] = useState<string | null>(null);
   
-  // Personalization
   const [themeColor, setThemeColor] = useState(() => localStorage.getItem('theme_color') || '#10b981');
   const [appName, setAppName] = useState(() => localStorage.getItem('app_name') || 'Nottiffy');
   const [showSettings, setShowSettings] = useState(false);
+  const [isAdding, setIsAdding] = useState(false);
+  const [isConfigValid, setIsConfigValid] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const checkConfig = async () => {
+      try {
+        const response = await fetch('/api/health');
+        const data = await response.json();
+        setIsConfigValid(data.gasConfigured);
+      } catch (e) {
+        setIsConfigValid(false);
+      }
+    };
+    checkConfig();
+  }, []);
 
   useEffect(() => {
     const newSocket = io();
@@ -84,9 +104,19 @@ export default function App() {
 
     newSocket.on('new-rows', (update: RowUpdate) => {
       setUpdates(prev => [update, ...prev]);
+      
+      setSheets(prev => prev.map(s => {
+        if (s.id === update.spreadsheetId) {
+          // Only update name if it's provided and we don't have a good one
+          const newName = update.spreadsheetName || s.name;
+          return { ...s, name: newName, lastCount: update.count };
+        }
+        return s;
+      }));
+
       if (Notification.permission === 'granted') {
         new Notification(`${update.count} New Row(s) Added!`, {
-          body: `Detected in your spreadsheet at ${new Date(update.timestamp).toLocaleTimeString()}`,
+          body: `Detected in ${update.spreadsheetName} at ${new Date(update.timestamp).toLocaleTimeString()}`,
         });
       }
     });
@@ -108,16 +138,50 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('spreadsheet_id', spreadsheetId);
-    localStorage.setItem('gas_url', gasUrl);
+    localStorage.setItem('monitored_sheets', JSON.stringify(sheets.map(({ id, name }) => ({ id, name }))));
     localStorage.setItem('poll_frequency', frequency.toString());
     localStorage.setItem('theme_color', themeColor);
     localStorage.setItem('app_name', appName);
-  }, [spreadsheetId, gasUrl, frequency, themeColor, appName]);
+  }, [sheets, frequency, themeColor, appName]);
+
+  const addSheet = async () => {
+    if (!newSheetId) return;
+    if (sheets.some(s => s.id === newSheetId)) {
+      alert('This Spreadsheet ID is already added');
+      return;
+    }
+
+    setIsAdding(true);
+    try {
+      const response = await fetch(`/api/spreadsheet/info?spreadsheetId=${newSheetId}`);
+      const data = await response.json();
+      
+      if (data.error) throw new Error(data.error);
+
+      setSheets(prev => [...prev, { 
+        id: newSheetId, 
+        name: data.name || (newSheetId.substring(0, 8) + '...'), 
+        lastCount: 0
+      }]);
+      setNewSheetId('');
+    } catch (err: any) {
+      alert(`Error adding spreadsheet: ${err.message}. Please check the ID and ensure your GAS script is deployed.`);
+    } finally {
+      setIsAdding(false);
+    }
+  };
+
+  const removeSheet = (id: string) => {
+    setSheets(prev => prev.filter(s => s.id !== id));
+    if (selectedSheetId === id) setSelectedSheetId(null);
+    if (isMonitoring) {
+      stopMonitoring();
+    }
+  };
 
   const startMonitoring = async () => {
-    if (!spreadsheetId || !gasUrl) {
-      setError('Please enter both Spreadsheet ID and GAS Web App URL');
+    if (sheets.length === 0 || !socket) {
+      setError('Please add at least one spreadsheet');
       return;
     }
 
@@ -129,24 +193,16 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          spreadsheetId,
-          gasUrl,
+          spreadsheetIds: sheets.map(s => s.id),
           frequency,
           startDate,
-          socketId: socket?.id
+          socketId: socket.id
         })
       });
 
       if (!response.ok) {
-        const contentType = response.headers.get('content-type');
-        if (contentType && contentType.includes('application/json')) {
-          const data = await response.json();
-          throw new Error(data.error || 'Failed to start monitoring');
-        } else {
-          const text = await response.text();
-          console.error('Non-JSON Error Response:', text);
-          throw new Error(`Server Error (${response.status}): ${text.substring(0, 100)}...`);
-        }
+        const data = await response.json();
+        throw new Error(data.error || 'Failed to start monitoring');
       }
 
       setIsMonitoring(true);
@@ -162,11 +218,12 @@ export default function App() {
   };
 
   const stopMonitoring = async () => {
+    if (!socket) return;
     try {
       await fetch('/api/monitor/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ socketId: socket?.id })
+        body: JSON.stringify({ socketId: socket.id })
       });
       setIsMonitoring(false);
       setStatus('idle');
@@ -176,16 +233,17 @@ export default function App() {
   };
 
   const handleManualPoll = () => {
-    if (!isMonitoring) return;
+    if (!isMonitoring || !socket) return;
     setIsRefreshing(true);
-    socket?.emit('request-manual-poll');
+    socket.emit('request-manual-poll');
   };
 
-  const openSpreadsheet = () => {
-    if (!spreadsheetId) return;
-    const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+  const openSpreadsheet = (id: string) => {
+    const url = `https://docs.google.com/spreadsheets/d/${id}/edit`;
     window.open(url, '_blank');
   };
+
+
 
   return (
     <div className="min-h-screen bg-zinc-50 font-sans text-zinc-900 selection:bg-emerald-100 pb-12">
@@ -212,6 +270,24 @@ export default function App() {
       </header>
 
       <main className="max-w-md mx-auto p-6 space-y-6">
+        {/* Configuration Warning */}
+        {isConfigValid === false && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 space-y-2"
+          >
+            <div className="flex items-center gap-2 font-bold">
+              <AlertCircle size={18} />
+              <span>Configuration Required</span>
+            </div>
+            <p className="text-xs leading-relaxed">
+              The <code className="bg-amber-100 px-1 rounded">GAS_URL</code> environment variable is not set on the server. 
+              Please add it in the <b>Settings</b> menu (AI Studio) or your <code className="bg-amber-100 px-1 rounded">.env</code> file (Local) to enable monitoring.
+            </p>
+          </motion.div>
+        )}
+
         {/* Settings Panel */}
         <AnimatePresence>
           {showSettings && (
@@ -235,37 +311,7 @@ export default function App() {
                   />
                 </div>
 
-                {!isPreConfigured && (
-                  <>
-                    <div className="space-y-4">
-                      <label className="flex items-center gap-2 text-sm font-semibold text-zinc-600">
-                        <LinkIcon size={16} /> Google App Script URL
-                      </label>
-                      <input 
-                        type="text" 
-                        value={gasUrl}
-                        onChange={(e) => setGasUrl(e.target.value)}
-                        disabled={isMonitoring}
-                        className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all disabled:bg-zinc-50 disabled:text-zinc-400"
-                        placeholder="https://script.google.com/macros/s/.../exec"
-                      />
-                    </div>
 
-                    <div className="space-y-4">
-                      <label className="flex items-center gap-2 text-sm font-semibold text-zinc-600">
-                        <Table size={16} /> Spreadsheet ID
-                      </label>
-                      <input 
-                        type="text" 
-                        value={spreadsheetId}
-                        onChange={(e) => setSpreadsheetId(e.target.value)}
-                        disabled={isMonitoring}
-                        className="w-full px-4 py-3 rounded-xl border border-zinc-200 focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all disabled:bg-zinc-50 disabled:text-zinc-400"
-                        placeholder="Enter ID from URL..."
-                      />
-                    </div>
-                  </>
-                )}
 
                 <div className="space-y-4">
                   <label className="flex items-center gap-2 text-sm font-semibold text-zinc-600">
@@ -315,28 +361,40 @@ export default function App() {
                 </div>
                 <div className="space-y-4 pt-4 border-t border-zinc-100">
                   <label className="flex items-center gap-2 text-sm font-semibold text-zinc-600">
-                    <LinkIcon size={16} /> Shareable Config
+                    <PlusCircle size={16} /> Add Spreadsheet ID
                   </label>
-                  <p className="text-xs text-zinc-400">
-                    Generate a link with your current settings to share or bookmark.
-                  </p>
-                  <button
-                    onClick={() => {
-                      const params = new URLSearchParams();
-                      params.set('gasUrl', gasUrl);
-                      params.set('spreadsheetId', spreadsheetId);
-                      params.set('frequency', frequency.toString());
-                      params.set('startDate', startDate);
-                      const shareUrl = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
-                      navigator.clipboard.writeText(shareUrl);
-                      alert('Config link copied to clipboard!');
-                    }}
-                    className="w-full py-3 rounded-xl border border-zinc-200 text-zinc-600 hover:bg-zinc-50 transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-sm font-bold"
-                  >
-                    <RefreshCw size={16} />
-                    Copy Config Link
-                  </button>
+                  <div className="flex gap-2">
+                    <input 
+                      type="text" 
+                      placeholder="Enter Spreadsheet ID"
+                      value={newSheetId}
+                      onChange={e => setNewSheetId(e.target.value)}
+                      className="flex-1 px-4 py-2 text-sm rounded-xl border border-zinc-200 outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                    <button
+                      onClick={addSheet}
+                      disabled={isAdding}
+                      className="px-4 py-2 rounded-xl bg-zinc-900 text-white text-sm font-bold hover:bg-zinc-800 transition-all disabled:opacity-50"
+                    >
+                      {isAdding ? <RefreshCw size={14} className="animate-spin" /> : 'Add'}
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {sheets.map(sheet => (
+                      <div key={sheet.id} className="flex items-center justify-between p-2 bg-zinc-50 rounded-lg border border-zinc-100">
+                        <span className="text-xs text-zinc-500 truncate max-w-[200px]">{sheet.id}</span>
+                        <button 
+                          onClick={() => removeSheet(sheet.id)}
+                          className="text-zinc-400 hover:text-red-500 p-1 transition-colors"
+                          title="Remove Spreadsheet"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
+
 
 
               </div>
@@ -344,21 +402,8 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {/* Configuration Card */}
+        {/* Monitoring Controls */}
         <section className="bg-white rounded-3xl p-8 shadow-sm border border-zinc-100 space-y-6">
-          <div className="space-y-2">
-            <h2 className="text-lg font-bold">
-              {isMonitoring ? 'Monitoring Active' : 'Ready to Monitor'}
-            </h2>
-            <p className="text-sm text-zinc-500">
-              {isMonitoring 
-                ? `Watching ${spreadsheetId.substring(0, 8)}...` 
-                : isPreConfigured 
-                  ? 'App is pre-configured and ready'
-                  : 'Configure your script in settings to start'}
-            </p>
-          </div>
-
           <div className="space-y-4">
             {error && (
               <div className="flex items-center gap-2 p-4 rounded-xl bg-red-50 text-red-600 text-sm">
@@ -382,9 +427,9 @@ export default function App() {
                 {status === 'connecting' ? (
                   <RefreshCw size={20} className="animate-spin" />
                 ) : isMonitoring ? (
-                  <>Stop Monitoring</>
+                  <>Stop Monitoring All</>
                 ) : (
-                  <>Start Monitoring</>
+                  <>Start Monitoring All</>
                 )}
               </button>
 
@@ -395,98 +440,152 @@ export default function App() {
                   className="w-full py-4 rounded-2xl font-bold bg-zinc-100 text-zinc-600 hover:bg-zinc-200 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
                 >
                   <Zap size={18} className={cn(isRefreshing && "animate-pulse text-yellow-500")} />
-                  {isRefreshing ? 'Checking...' : 'Refresh Now'}
-                </button>
-              )}
-
-              {spreadsheetId && (
-                <button 
-                  onClick={openSpreadsheet}
-                  className="w-full py-4 rounded-2xl font-bold border border-zinc-200 text-zinc-600 hover:bg-zinc-50 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
-                >
-                  <ExternalLink size={18} />
-                  Open Spreadsheet
-                </button>
-              )}
-              
-              {!isMonitoring && !isPreConfigured && !spreadsheetId && (
-                <button 
-                  onClick={() => setShowSettings(true)}
-                  className="w-full py-4 rounded-2xl font-bold bg-emerald-50 text-emerald-600 hover:bg-emerald-100 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
-                >
-                  <Settings size={18} />
-                  Open Settings to Configure
+                  {isRefreshing ? 'Checking All...' : 'Refresh All Now'}
                 </button>
               )}
             </div>
           </div>
         </section>
 
-        {/* Status Indicator */}
-        <div className="flex items-center justify-center gap-2 py-2">
-          <div className={cn(
-            "w-2 h-2 rounded-full",
-            isMonitoring ? "bg-emerald-500 animate-pulse" : "bg-zinc-300"
-          )} />
-          <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest">
-            {isMonitoring ? `Polling every ${frequency}m` : 'Monitoring Inactive'}
-          </span>
-        </div>
+        {/* Monitored Spreadsheets Section */}
+        <section className="bg-white rounded-3xl p-6 shadow-sm border border-zinc-100 space-y-4">
+          <div className="flex items-center justify-between px-2">
+            <h2 className="text-sm font-bold text-zinc-400 uppercase tracking-wider">Monitored Sheets</h2>
+            <div className="flex items-center gap-2">
+              <div className={cn(
+                "w-2 h-2 rounded-full",
+                isMonitoring ? "bg-emerald-500 animate-pulse" : "bg-zinc-300"
+              )} />
+              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
+                {frequency}m Polling
+              </span>
+            </div>
+          </div>
 
-        {/* Updates Feed */}
-        <section className="space-y-4">
-          <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider px-2">Recent Updates</h3>
-          
-          <div className="space-y-3">
-            {updates.length === 0 ? (
-              <div className="text-center py-12 bg-white rounded-3xl border border-dashed border-zinc-200">
-                <p className="text-zinc-400 text-sm italic">No updates yet. Waiting for new rows...</p>
+          <div className="space-y-2">
+            {sheets.length === 0 ? (
+              <div className="text-center py-8 border border-dashed border-zinc-100 rounded-2xl">
+                <p className="text-xs text-zinc-400 italic">No spreadsheets added yet.</p>
               </div>
             ) : (
-              <AnimatePresence initial={false}>
-                {updates.map((update) => (
-                  <motion.div 
-                    key={update.timestamp}
-                    initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    className="bg-white p-5 rounded-2xl border border-zinc-100 shadow-sm flex items-start gap-4"
+              sheets.map((sheet) => (
+                <div 
+                  key={sheet.id}
+                  onClick={() => setSelectedSheetId(selectedSheetId === sheet.id ? null : sheet.id)}
+                  className={cn(
+                    "w-full flex items-center gap-3 p-3 rounded-2xl border transition-all text-left cursor-pointer",
+                    selectedSheetId === sheet.id 
+                      ? "bg-white border-emerald-500 shadow-md ring-2 ring-emerald-500/10" 
+                      : "bg-zinc-50 border-zinc-100 hover:bg-zinc-100"
+                  )}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      setSelectedSheetId(selectedSheetId === sheet.id ? null : sheet.id);
+                    }
+                  }}
+                >
+                  {/* Count Circle */}
+                  <div 
+                    className={cn(
+                      "w-8 h-8 rounded-full flex items-center justify-center shrink-0 font-bold text-xs transition-all",
+                      sheet.lastCount > 0 
+                        ? "bg-emerald-500 text-white scale-110 shadow-lg shadow-emerald-200" 
+                        : "bg-zinc-200 text-zinc-500"
+                    )}
                   >
-                    <div 
-                      className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
-                      style={{ backgroundColor: `${themeColor}15`, color: themeColor }}
-                    >
-                      <PlusCircle size={20} />
+                    {sheet.lastCount}
+                  </div>
+
+                  {/* Name and Link */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-sm truncate text-zinc-700">{sheet.name}</span>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openSpreadsheet(sheet.id);
+                        }}
+                        className="text-zinc-400 hover:text-zinc-600 transition-colors"
+                        title="Open Spreadsheet"
+                      >
+                        <ExternalLink size={12} />
+                      </button>
                     </div>
-                    <div className="space-y-1 flex-1">
-                      <div className="flex items-center justify-between">
-                        <h4 className="font-bold text-zinc-900">{update.count} New Row{update.count > 1 ? 's' : ''}</h4>
-                        <span className="text-[10px] font-bold text-zinc-400 uppercase">
-                          {new Date(update.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
-                      <div className="text-sm text-zinc-500 overflow-hidden">
-                        {update.rows.map((row, i) => (
-                          <div key={i} className="truncate border-l-2 border-zinc-100 pl-2 mt-1 first:mt-0">
-                            {row.join(', ')}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
+                  </div>
+                </div>
+              ))
             )}
           </div>
         </section>
-      </main>
 
-      {/* Footer Info */}
-      <footer className="max-w-md mx-auto p-8 text-center">
-        <p className="text-xs text-zinc-400 leading-relaxed">
-          The app executes the Google app script which checks for spreadsheet updates at the specified frequency. 
-          Ensure your GAS script is deployed as a Web App with access for "Anyone".
-        </p>
-      </footer>
+
+        {/* Updates Feed */}
+        {selectedSheetId && (
+          <section className="space-y-4">
+            <div className="flex items-center justify-between px-2">
+              <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-wider">
+                Updates for {sheets.find(s => s.id === selectedSheetId)?.name || 'Selected Sheet'}
+              </h3>
+              <button 
+                onClick={() => setSelectedSheetId(null)}
+                className="text-[10px] font-bold text-emerald-600 uppercase hover:underline"
+              >
+                Hide Updates
+              </button>
+            </div>
+            
+            <div className="space-y-3">
+              {updates.filter(u => u.spreadsheetId === selectedSheetId).length === 0 ? (
+                <div className="text-center py-12 bg-white rounded-3xl border border-dashed border-zinc-200">
+                  <p className="text-zinc-400 text-sm italic">No updates found for this spreadsheet.</p>
+                </div>
+              ) : (
+                <AnimatePresence initial={false}>
+                  {updates
+                    .filter(u => u.spreadsheetId === selectedSheetId)
+                    .map((update) => (
+                      <motion.div 
+                        key={update.timestamp}
+                        initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        className="bg-white p-5 rounded-2xl border border-zinc-100 shadow-sm flex items-start gap-4"
+                      >
+                      <div 
+                        className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+                        style={{ backgroundColor: `${themeColor}15`, color: themeColor }}
+                      >
+                        <PlusCircle size={20} />
+                      </div>
+                      <div className="space-y-1 flex-1">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-bold text-zinc-900">
+                            {update.count} New Row{update.count > 1 ? 's' : ''}
+                            <span className="ml-2 text-[10px] font-normal text-zinc-400">
+                              in {update.spreadsheetName || sheets.find(s => s.id === update.spreadsheetId)?.name || update.spreadsheetId.substring(0, 8)}
+                            </span>
+                          </h4>
+                          <span className="text-[10px] font-bold text-zinc-400 uppercase">
+                            {new Date(update.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <div className="text-sm text-zinc-500 overflow-hidden">
+                          {update.rows.map((row, i) => (
+                            <div key={i} className="truncate border-l-2 border-zinc-100 pl-2 mt-1 first:mt-0">
+                              {row.join(', ')}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              )}
+            </div>
+          </section>
+        )}
+      </main>
     </div>
   );
 }

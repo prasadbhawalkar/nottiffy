@@ -20,20 +20,60 @@ async function startServer() {
   app.use((req, res, next) => {
     console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
     next();
+
+  const gasUrl = process.env.GAS_URL;
+    if (!gasUrl) {
+      return res.status(400).json({ error: "Missing GAS_URL - not configured", gasUrl });
+    }
+
   });
 
   // In-memory store for user sheet monitoring
-  const monitors = new Map<string, { spreadsheetId: string, gasUrl: string, lastPolledTime: string, interval: NodeJS.Timeout }>();
+  // Key: socketId
+  const monitors = new Map<string, { spreadsheetIds: string[], lastPolledTimes: Map<string, string>, interval: NodeJS.Timeout }>();
 
-  // Start monitoring a sheet via GAS
-  app.post("/api/monitor/start", async (req, res) => {
-    const { spreadsheetId, gasUrl, frequency, startDate, socketId } = req.body;
-    
-    if (!spreadsheetId || !gasUrl) {
-      return res.status(400).json({ error: "Missing spreadsheetId or gasUrl" });
+  // Health check to verify configuration
+  app.get("/api/health", (req, res) => {
+    res.json({ 
+      status: "ok", 
+      gasConfigured: !!process.env.GAS_URL,
+      env: process.env.NODE_ENV
+    });
+  });
+
+  // Get spreadsheet info (name)
+  app.get("/api/spreadsheet/info", async (req, res) => {
+    const { spreadsheetId } = req.query;
+    const gasUrl = process.env.GAS_URL;
+
+    if (!spreadsheetId || typeof spreadsheetId !== 'string' || !gasUrl) {
+      return res.status(400).json({ error: "Missing spreadsheetId or GAS_URL not configured", gasUrl });
     }
 
-    const pollFrequency = Math.max(1, frequency || 1) * 60 * 1000; // Convert minutes to ms, min 1 min
+    try {
+      const url = new URL(gasUrl);
+      url.searchParams.append("mode", "info");
+      url.searchParams.append("spreadsheetId", spreadsheetId);
+
+      const response = await fetch(url.toString());
+      if (!response.ok) throw new Error("Failed to fetch from GAS");
+      const data = await response.json();
+      res.json(data);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Start monitoring sheets via GAS
+  app.post("/api/monitor/start", async (req, res) => {
+    const { spreadsheetIds, frequency, startDate, socketId } = req.body;
+    const gasUrl = process.env.GAS_URL;
+    
+    if (!spreadsheetIds || !Array.isArray(spreadsheetIds) || spreadsheetIds.length === 0 || !gasUrl || !socketId) {
+      return res.status(400).json({ error: "Missing spreadsheetIds, socketId, or GAS_URL not configured on server" });
+    }
+
+    const pollFrequency = Math.max(1, frequency || 1) * 60 * 1000;
     const initialPolledTime = startDate || new Date(Date.now() - 86400000).toISOString().split('T')[0];
 
     // Clear existing monitor for this socket if any
@@ -41,54 +81,66 @@ async function startServer() {
       clearInterval(monitors.get(socketId)!.interval);
     }
 
+    const lastPolledTimes = new Map<string, string>();
+    spreadsheetIds.forEach(id => lastPolledTimes.set(id, initialPolledTime));
+
     const poll = async () => {
       const monitor = monitors.get(socketId);
       if (!monitor) return;
 
       try {
-        const url = new URL(monitor.gasUrl);
-        url.searchParams.append("spreadsheetId", monitor.spreadsheetId);
-        url.searchParams.append("lastPolledDate", monitor.lastPolledTime);
+        const gasUrl = process.env.GAS_URL;
+        if (!gasUrl) {
+          console.error("GAS_URL not configured in environment");
+          return;
+        }
 
-        console.log(`Polling GAS: ${url.toString()}`);
+        const url = new URL(gasUrl);
+        const ids = monitor.spreadsheetIds.join(',');
+        const dates = monitor.spreadsheetIds.map(id => monitor.lastPolledTimes.get(id) || initialPolledTime).join(',');
+        
+        url.searchParams.append("spreadsheetIds", ids);
+        url.searchParams.append("lastPolledDates", dates);
+
+        console.log(`Polling GAS for multiple IDs: ${ids}`);
         const response = await fetch(url.toString());
         
+        if (!response.ok) return;
         const contentType = response.headers.get('content-type');
-        if (!response.ok) {
-          const text = await response.text();
-          throw new Error(`GAS returned ${response.status}: ${text.substring(0, 50)}`);
-        }
-
-        if (!contentType || !contentType.includes('application/json')) {
-          const text = await response.text();
-          console.error('GAS returned non-JSON:', text);
-          throw new Error("GAS script returned HTML instead of JSON. Ensure it is deployed as a Web App and shared with 'Anyone'.");
-        }
+        if (!contentType || !contentType.includes('application/json')) return;
         
         const data = await response.json();
-        
-        if (data.count > 0) {
-          io.to(socketId).emit("new-rows", { 
-            count: data.count, 
-            rows: data.rows,
-            timestamp: data.currentTime || new Date().toISOString()
-          });
+        const results = data.results || [];
+
+        for (const result of results) {
+          if (result.error) {
+            console.error(`Error polling ${result.spreadsheetId}: ${result.error}`);
+            continue;
+          }
+
+          if (result.count > 0) {
+            io.to(socketId).emit("new-rows", { 
+              spreadsheetId: result.spreadsheetId,
+              spreadsheetName: result.spreadsheetName,
+              count: result.count, 
+              rows: result.rows,
+              timestamp: result.currentTime || new Date().toISOString()
+            });
+          }
+          
+          monitor.lastPolledTimes.set(result.spreadsheetId, result.currentTime || new Date().toISOString());
         }
-        
-        // Update last polled time to the time returned by GAS or current time
-        monitor.lastPolledTime = data.currentTime || new Date().toISOString();
       } catch (err) {
-        console.error("Polling error:", err);
-        io.to(socketId).emit("monitor-error", { message: "Failed to poll GAS script. Check your URL and permissions." });
+        console.error(`Consolidated polling error:`, err);
       }
+      io.to(socketId).emit("poll-complete");
     };
 
     const interval = setInterval(poll, pollFrequency);
 
     monitors.set(socketId, { 
-      spreadsheetId, 
-      gasUrl, 
-      lastPolledTime: initialPolledTime, 
+      spreadsheetIds, 
+      lastPolledTimes, 
       interval 
     });
 
@@ -113,46 +165,48 @@ async function startServer() {
     socket.on("request-manual-poll", async () => {
       const monitor = monitors.get(socket.id);
       if (!monitor) {
-        socket.emit("monitor-error", { message: "No active monitor found for manual poll." });
+        socket.emit("monitor-error", { message: "No active monitor found." });
         return;
       }
 
       try {
-        const url = new URL(monitor.gasUrl);
-        url.searchParams.append("spreadsheetId", monitor.spreadsheetId);
-        url.searchParams.append("lastPolledDate", monitor.lastPolledTime);
+        const gasUrl = process.env.GAS_URL;
+        if (!gasUrl) {
+          socket.emit("monitor-error", { message: "GAS_URL not configured on server." });
+          return;
+        }
 
-        console.log(`Manual Polling GAS: ${url.toString()}`);
+        const url = new URL(gasUrl);
+        const ids = monitor.spreadsheetIds.join(',');
+        const dates = monitor.spreadsheetIds.map(id => monitor.lastPolledTimes.get(id) || new Date(Date.now() - 86400000).toISOString()).join(',');
+        
+        url.searchParams.append("spreadsheetIds", ids);
+        url.searchParams.append("lastPolledDates", dates);
+
         const response = await fetch(url.toString());
-        
-        const contentType = response.headers.get('content-type');
-        if (!response.ok) {
-          const text = await response.text();
-          throw new Error(`GAS returned ${response.status}: ${text.substring(0, 50)}`);
-        }
-
-        if (!contentType || !contentType.includes('application/json')) {
-          const text = await response.text();
-          console.error('GAS returned non-JSON:', text);
-          throw new Error("GAS script returned HTML instead of JSON. Ensure it is deployed as a Web App and shared with 'Anyone'.");
-        }
-        
+        if (!response.ok) return;
         const data = await response.json();
-        
-        if (data.count > 0) {
-          socket.emit("new-rows", { 
-            count: data.count, 
-            rows: data.rows,
-            timestamp: data.currentTime || new Date().toISOString()
-          });
+        const results = data.results || [];
+
+        for (const result of results) {
+          if (result.error) continue;
+
+          if (result.count > 0) {
+            socket.emit("new-rows", { 
+              spreadsheetId: result.spreadsheetId,
+              spreadsheetName: result.spreadsheetName,
+              count: result.count, 
+              rows: result.rows,
+              timestamp: result.currentTime || new Date().toISOString()
+            });
+          }
+          
+          monitor.lastPolledTimes.set(result.spreadsheetId, result.currentTime || new Date().toISOString());
         }
-        
-        monitor.lastPolledTime = data.currentTime || new Date().toISOString();
-        socket.emit("poll-complete", { success: true });
       } catch (err) {
-        console.error("Manual polling error:", err);
-        socket.emit("monitor-error", { message: "Manual poll failed. Check your GAS script." });
+        console.error(`Manual consolidated poll error:`, err);
       }
+      socket.emit("poll-complete", { success: true });
     });
 
     socket.on("disconnect", () => {
@@ -162,6 +216,8 @@ async function startServer() {
       }
     });
   });
+
+
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
