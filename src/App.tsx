@@ -271,7 +271,7 @@ export default function App() {
 
       <main className="max-w-md mx-auto p-6 space-y-6">
         {/* Configuration Warning */}
-        {!process.env.GAS_URL && (
+        {isConfigValid === false && (
           <motion.div 
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -282,7 +282,7 @@ export default function App() {
               <span>Configuration Required</span>
             </div>
             <p className="text-xs leading-relaxed">
-              The <code className="bg-amber-100 px-1 rounded">GAS_URL</code> {appName} environment variable {isConfigValid} {process.env.GAS_URL}is not set on the server. 
+              The <code className="bg-amber-100 px-1 rounded">GAS_URL</code> environment variable is not set on the server. 
               Please add it in the <b>Settings</b> menu (AI Studio) or your <code className="bg-amber-100 px-1 rounded">.env</code> file (Local) to enable monitoring.
             </p>
           </motion.div>
@@ -382,7 +382,7 @@ export default function App() {
                   <div className="space-y-2">
                     {sheets.map(sheet => (
                       <div key={sheet.id} className="flex items-center justify-between p-2 bg-zinc-50 rounded-lg border border-zinc-100">
-                        <span className="text-xs text-zinc-500 truncate max-w-[200px]">{sheet.id}</span>
+                        <span className="text-xs text-zinc-700 font-medium truncate max-w-[200px]">{sheet.name}</span>
                         <button 
                           onClick={() => removeSheet(sheet.id)}
                           className="text-zinc-400 hover:text-red-500 p-1 transition-colors"
