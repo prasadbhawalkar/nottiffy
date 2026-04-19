@@ -28,15 +28,10 @@ async function startServer() {
 
   // Health check to verify configuration
   app.get("/api/health", (req, res) => {
-    const gasUrl = process.env.GAS_URL;
-    if (!gasUrl) {
-       console.error("GAS_URL not configured in environment");
-      return;
-     }
     res.json({ 
       status: "ok", 
       gasConfigured: !!process.env.GAS_URL,
-      env: process.env.NODE_ENV
+      env: process.env.NODE_ENV || 'production'
     });
   });
 
@@ -219,13 +214,13 @@ async function startServer() {
 
 
   // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
+  } else if (!process.env.VERCEL) {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
