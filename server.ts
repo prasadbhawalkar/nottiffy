@@ -35,7 +35,7 @@ async function startServer() {
      }
     res.json({ 
       status: "ok", 
-      gasConfigured: "TRUE",
+      gasConfigured: !!process.env.GAS_URL,
       env: process.env.NODE_ENV
     });
   });
@@ -233,9 +233,22 @@ async function startServer() {
     });
   }
 
-  server.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  if (!process.env.VERCEL) {
+    server.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  }
+
+  return app;
 }
 
-startServer();
+// For AI Studio / Local runtime
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+// Export for Vercel Serverless Functions
+export default async (req: any, res: any) => {
+  const app = await startServer();
+  return app(req, res);
+};
