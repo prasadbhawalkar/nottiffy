@@ -5,16 +5,13 @@
 # Run and deploy your AI Studio app
 
 This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/25356a47-54f9-4e12-9d9c-48dca21c5ec2
+Copy the code from google-apps-script.js into any Google App Script.
+Add the spreadsheet id (default spreadsheet) to the script variable.
+Put that GAS URL (exec) of the GAS script in the .env or system environment variable (GAS_URL=).
 
 ## Run Locally
-
 **Prerequisites:**  Node.js
-
-
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. Run the app:
    `npm run dev`
