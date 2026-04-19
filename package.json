@@ -4,10 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "tsx api/index.ts",
     "build": "vite build",
-    "start": "NODE_ENV=production node server.ts",
-    "preview": "vite preview",
+    "start": "NODE_ENV=production tsx api/index.ts",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
   },
