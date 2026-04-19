@@ -72,8 +72,8 @@ async function startServer() {
     const { spreadsheetIds, frequency, startDate, socketId } = req.body;
     const gasUrl = process.env.GAS_URL;
     
-    if (!spreadsheetIds || !Array.isArray(spreadsheetIds) || spreadsheetIds.length === 0 || !gasUrl || !socketId) {
-      return res.status(400).json({ error: "Missing spreadsheetIds, socketId, or GAS_URL not configured on server" });
+    if (!spreadsheetIds || !Array.isArray(spreadsheetIds) || spreadsheetIds.length === 0 || !gasUrl) {
+      return res.status(400).json({ error: "Missing spreadsheetIds or GAS_URL not configured on server" });
     }
 
     const pollFrequency = Math.max(1, frequency || 1) * 60 * 1000;
@@ -152,6 +152,28 @@ async function startServer() {
     poll();
 
     res.json({ success: true, nextPollIn: pollFrequency, mode: process.env.VERCEL ? 'serverless-one-shot' : 'persistent' });
+  });
+
+  app.post("/api/monitor/poll", async (req, res) => {
+    const { spreadsheetIds, lastPolledDates } = req.body;
+    const gasUrl = process.env.GAS_URL;
+
+    if (!spreadsheetIds || !Array.isArray(spreadsheetIds) || !gasUrl) {
+      return res.status(400).json({ error: "Missing spreadsheetIds or GAS_URL" });
+    }
+
+    try {
+      const url = new URL(gasUrl);
+      url.searchParams.append("spreadsheetIds", spreadsheetIds.join(','));
+      url.searchParams.append("lastPolledDates", lastPolledDates.join(','));
+
+      const response = await fetch(url.toString());
+      if (!response.ok) throw new Error("GAS poll failed");
+      const data = await response.json();
+      res.json(data);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.post("/api/monitor/stop", (req, res) => {
