@@ -180,13 +180,15 @@ export default function App() {
   };
 
   const startMonitoring = async () => {
-    if (sheets.length === 0 || !socket) {
+    if (sheets.length === 0) {
       setError('Please add at least one spreadsheet');
       return;
     }
 
     setStatus('connecting');
     setError(null);
+
+    const socketId = socket?.connected ? socket.id : null;
 
     try {
       const response = await fetch('/api/monitor/start', {
@@ -196,10 +198,9 @@ export default function App() {
           spreadsheetIds: sheets.map(s => s.id),
           frequency,
           startDate,
-          socketId: socket.id
+          socketId
         })
       });
-
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data.error || 'Failed to start monitoring');
@@ -232,10 +233,58 @@ export default function App() {
     }
   };
 
-  const handleManualPoll = () => {
-    if (!isMonitoring || !socket) return;
+  const handleManualPoll = async () => {
+    if (!isMonitoring) return;
     setIsRefreshing(true);
-    socket.emit('request-manual-poll');
+    
+    if (socket?.connected) {
+      socket.emit('request-manual-poll');
+    } else {
+      try {
+        // Fallback for non-websocket environments (e.g. Vercel)
+        const response = await fetch('/api/monitor/poll', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            spreadsheetIds: sheets.map(s => s.id),
+            lastPolledDates: sheets.map(s => {
+              // Try to find the last update for this sheet to get the timestamp
+              const lastUpdate = updates.find(u => u.spreadsheetId === s.id);
+              return lastUpdate ? lastUpdate.timestamp : startDate;
+            })
+          })
+        });
+
+        if (!response.ok) throw new Error('Poll failed');
+        const data = await response.json();
+        const results = data.results || [];
+
+        results.forEach((result: any) => {
+          if (result.error) return;
+          if (result.count > 0) {
+            const update: RowUpdate = {
+              spreadsheetId: result.spreadsheetId,
+              spreadsheetName: result.spreadsheetName,
+              count: result.count,
+              rows: result.rows,
+              timestamp: result.currentTime || new Date().toISOString()
+            };
+            
+            setUpdates(prev => [update, ...prev]);
+            setSheets(prev => prev.map(sheet => {
+              if (sheet.id === update.spreadsheetId) {
+                return { ...sheet, name: update.spreadsheetName || sheet.name, lastCount: update.count };
+              }
+              return sheet;
+            }));
+          }
+        });
+      } catch (err: any) {
+        setError(`Refresh failed: ${err.message}`);
+      } finally {
+        setIsRefreshing(false);
+      }
+    }
   };
 
   const openSpreadsheet = (id: string) => {
